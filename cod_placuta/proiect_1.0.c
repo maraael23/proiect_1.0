@@ -7,7 +7,8 @@
 // Default I2C address for most backpacks is 0x27 (sometimes 0x3F)
 static int addr = 0x27;
 
-// LCD Commands
+// --- HD44780 LCD Commands ---
+// Base hex commands for LCD operations
 const int LCD_CLEARDISPLAY = 0x01;
 const int LCD_RETURNHOME = 0x02;
 const int LCD_ENTRYMODESET = 0x04;
@@ -15,64 +16,80 @@ const int LCD_DISPLAYCONTROL = 0x08;
 const int LCD_FUNCTIONSET = 0x20;
 const int LCD_SETDDRAMADDR = 0x80;
 
-// Flags for display control
+// --- Flags for display control ---
+// Modifiers added to base commands (e.g., turning display on, 2-line mode)
 const int LCD_DISPLAYON = 0x04;
 const int LCD_2LINE = 0x08;
-const int LCD_BACKLIGHT = 0x08;
-const int LCD_ENABLE_BIT = 0x04;
+const int LCD_BACKLIGHT = 0x08;  // I2C backpack pin to keep backlight LED on
+const int LCD_ENABLE_BIT = 0x04; // I2C backpack pin for the Enable (EN) pulse
 
+// Register Select (RS) mode: 1 for printing text, 0 for sending commands
 #define LCD_CHARACTER  1
 #define LCD_COMMAND    0
 
+// Writes 1 single byte over I2C to the LCD's address, false = generate STOP condition
 void i2c_write_byte(uint8_t val) {
     i2c_write_blocking(i2c0, addr, &val, 1, false);
 }
 
+// Toggles the Enable (EN) pin HIGH then LOW to tell the LCD to read the data lines.
+// 600 us delays give the slow LCD processor enough time to register the pulse.
 void lcd_toggle_enable(uint8_t val) {
     sleep_us(600);
-    i2c_write_byte(val | LCD_ENABLE_BIT);
+    i2c_write_byte(val | LCD_ENABLE_BIT);  // Set EN high
     sleep_us(600);
-    i2c_write_byte(val & ~LCD_ENABLE_BIT);
+    i2c_write_byte(val & ~LCD_ENABLE_BIT); // Set EN low
     sleep_us(600);
 }
 
+// The LCD operates in 4-bit mode, so an 8-bit byte must be split into 2 x 4-bit transfers
 void lcd_send_byte(uint8_t val, int mode) {
-    uint8_t high = mode | (val & 0xF0) | LCD_BACKLIGHT;
-    uint8_t low = mode | ((val << 4) & 0xF0) | LCD_BACKLIGHT;
+    uint8_t high = mode | (val & 0xF0) | LCD_BACKLIGHT;        // Extract the first (high) 4 bits
+    uint8_t low = mode | ((val << 4) & 0xF0) | LCD_BACKLIGHT;  // Shift and extract the last (low) 4 bits
 
     i2c_write_byte(high);
-    lcd_toggle_enable(high);
+    lcd_toggle_enable(high); // Send high bits and pulse
     i2c_write_byte(low);
-    lcd_toggle_enable(low);
+    lcd_toggle_enable(low);  // Send low bits and pulse
 }
 
+// Clears all text from the display
 void lcd_clear() {
     lcd_send_byte(LCD_CLEARDISPLAY, LCD_COMMAND);
 }
 
+// Moves the cursor to a specific row (0 or 1) and column (position).
+// Line 0 starts at memory address 0x80, Line 1 starts at 0xC0.
 void lcd_set_cursor(int line, int position) {
     int val = (line == 0) ? 0x80 + position : 0xC0 + position;
     lcd_send_byte(val, LCD_COMMAND);
 }
 
+// Iterates through a C-string and sends it character by character to the screen
 void lcd_string(const char *s) {
     while (*s) {
-        lcd_send_byte(*s++, LCD_CHARACTER);
+        lcd_send_byte(*s++, LCD_CHARACTER); // Send as CHARACTER mode
     }
 }
 
+// Initialization "handshake" to wake up the LCD and configure settings
 void lcd_init() {
+    // 1. Hardware reset sequence to guarantee a known starting state
     lcd_send_byte(0x03, LCD_COMMAND);
     lcd_send_byte(0x03, LCD_COMMAND);
     lcd_send_byte(0x03, LCD_COMMAND);
+    
+    // 2. Command to switch the LCD from default 8-bit mode to 4-bit mode
     lcd_send_byte(0x02, LCD_COMMAND);
 
+    // 3. Configure display settings: Auto-increment cursor, 2 lines, Display ON
     lcd_send_byte(LCD_ENTRYMODESET | 0x02, LCD_COMMAND);
     lcd_send_byte(LCD_FUNCTIONSET | LCD_2LINE, LCD_COMMAND);
     lcd_send_byte(LCD_DISPLAYCONTROL | LCD_DISPLAYON, LCD_COMMAND);
+    
+    // 4. Wipe any random garbage memory from startup
     lcd_clear();
 }
-
 //IR+LED DEFINES
 #define LED_OUT 16
 #define IR_IN 21
@@ -117,7 +134,7 @@ int main()
         //***LCD I2C
         lcd_clear();
         lcd_set_cursor(0, 0);
-        lcd_string("Hello Pico 2W!");
+        lcd_string("Liliana >_< :3");
         lcd_set_cursor(1, 0);
         lcd_string("I2C LCD Test");
         //*** 

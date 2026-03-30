@@ -41,7 +41,7 @@ pico_set_program_name(proiect_1.0 "proiect_1.0")
 pico_set_program_version(proiect_1.0 "0.1")
 
 # Modify the below lines to enable/disable output over UART/USB
-pico_enable_stdio_uart(proiect_1.0 0)
+pico_enable_stdio_uart(proiect_1.0 0) # 1 for UART and 0 for USB when DEBUGGING!!!
 pico_enable_stdio_usb(proiect_1.0 1)
 
 # Add the standard library to the build
@@ -58,6 +58,7 @@ target_include_directories(proiect_1.0 PRIVATE
 # Add any user requested libraries
 target_link_libraries(proiect_1.0 
         hardware_i2c
+        pico_cyw43_arch_lwip_threadsafe_background
         )
 
 pico_add_extra_outputs(proiect_1.0)
