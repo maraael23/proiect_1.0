@@ -1,7 +1,28 @@
 #include <stdio.h>
+#include <string.h>
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
 #include "hardware/gpio.h" 
+#include "pico/util/queue.h" 
+#include "pico/util/datetime.h"
+
+
+//IR+LED DEFINES
+#define LED_OUT 6
+#define IR_IN 21
+
+
+//WTV AUDIO MODULE
+
+#define WTV_RESET 14
+#define WTV_DI 13
+#define WTV_CLK  15
+#define WTV_BUSY  28
+
+//LCD + I2C
+#define I2C_SDA 4
+#define I2C_SCL 5
+
 // I2C defines + functions
 
 // Default I2C address for most backpacks is 0x27 (sometimes 0x3F)
@@ -90,23 +111,67 @@ void lcd_init() {
     // 4. Wipe any random garbage memory from startup
     lcd_clear();
 }
-//IR+LED DEFINES
-#define LED_OUT 16
-#define IR_IN 21
 
+// LCD QUEUE
+typedef struct {
+    char row1[17];
+    char row2[17];
+}mesaj_lcd;
 
+queue_t coada_lcd;
+
+void lcd_task(){
+    mesaj_lcd msg;
+    if (queue_try_remove(&coada_lcd, &msg)) {
+        lcd_clear();
+        if (strlen(msg.row1) > 0) {
+            lcd_set_cursor(0, 0); 
+            lcd_string(msg.row1);
+            lcd_set_cursor(1, 0); 
+            lcd_string(msg.row2);
+        }
+    }
+}
+
+//DETECTIE PE ZILE
+typedef enum{
+    Azi=1,
+    Maine=2,
+    Poimaine=3,
+    LimitaAtinsa=4
+}zile;
+
+void procesare_detectie(int n, mesaj_lcd *m){
+    switch(n) {
+        case Azi:
+            strcpy(m->row1, "Ziua: Azi");
+            break;
+        case Maine:
+            strcpy(m->row1, "Ziua: Maine");
+            break;
+        case Poimaine:
+            strcpy(m->row1, "Ziua: Poimaine");
+            break;
+        case LimitaAtinsa:
+            strcpy(m->row1, "Limita atinsa");
+                break;
+        default:
+            strcpy(m->row1, "Input zile");
+                break;
+        }
+
+}
 int main()
 {
     stdio_init_all();
 
     // I2C Initialisation. Using it at 100Khz.
     i2c_init(i2c0, 100 * 1000);
-    gpio_set_function(4, GPIO_FUNC_I2C);
-    gpio_set_function(5, GPIO_FUNC_I2C);
-    gpio_pull_up(4);
-    gpio_pull_up(5);
+    gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(I2C_SDA);
+    gpio_pull_up(I2C_SCL);
 
-    lcd_init();
 
     //***IR + LED CONFIGURATION
     gpio_init(LED_OUT);
@@ -117,30 +182,82 @@ int main()
     gpio_pull_up(IR_IN); 
     //*** 
 
+    lcd_init();
+    //QUEUE
+    queue_init(&coada_lcd,sizeof(mesaj_lcd),10); //max 10 mesaje
+   
+    int nr_detectari=0;
+    bool stare_ir = true;
+
     while (true) {
         //***IR + LED CODE
         bool ir_val= gpio_get(IR_IN);
-        printf("Hello, world!\n");
-        printf("IR Sensor Value: %d\n", ir_val);   
-       
-        if(ir_val==0){
-            gpio_put(LED_OUT, 1);
-        }else{
-            gpio_put(LED_OUT, 0);
+        printf("IR Sensor Value: %d \n", ir_val);   
+        mesaj_lcd mesaj_nou= {"", ""};
+
+        lcd_task();
+        //daca s-a schimbat starea fata de cea dinainte
+        if(ir_val != stare_ir){
+            //detectie, pana in 3 pentru azi maine poimaine!!!!!
+            if(ir_val==0 && nr_detectari<3){
+                
+                printf("S-a detectat miscare. \n");
+                gpio_put(LED_OUT, 1);
+                printf("S-a aprins LED-ul. \n");
+                
+                nr_detectari++;
+                 
+                procesare_detectie(nr_detectari, &mesaj_nou);
+                snprintf(mesaj_nou.row2, 17, "Detectia nr: %d", nr_detectari);
+                queue_add_blocking(&coada_lcd, &mesaj_nou);
+                printf("S-a trimis mesajul. \n");
+
+               
+                absolute_time_t timer = make_timeout_time_ms(3000);
+                // Asteptare 3s non-blocking
+                while (!time_reached(timer)) {
+                    tight_loop_contents(); 
+                }
+                
+                // Confirmare prezenta dupa cele 3 secunde
+                if(gpio_get(IR_IN) == 0 && nr_detectari < 3){
+                printf("NOUA MISCARE DETECTATA \n");
+
+                nr_detectari++; 
+                
+                procesare_detectie(nr_detectari, &mesaj_nou);
+                snprintf(mesaj_nou.row2, 17, "INCA AICI: %d", nr_detectari);
+                queue_add_blocking(&coada_lcd, &mesaj_nou);
+            }
+
+            }else{
+                gpio_put(LED_OUT, 0);
+                //resetare dupa atingerea pragului de 3 secunde
+                if(nr_detectari ==3){
+                    nr_detectari++;
+                    printf("S-a atins limita de zile. \n");
+                    procesare_detectie(nr_detectari, &mesaj_nou);
+                    strcpy(mesaj_nou.row2, "Resetare...");
+                    queue_add_blocking(&coada_lcd, &mesaj_nou);
+
+                    sleep_ms(2000); 
+                    nr_detectari = 0;
+
+                    printf("S-a resetat numaratoarea. \n");
+                    strcpy(mesaj_nou.row1, "Gata de start");
+                    queue_add_blocking(&coada_lcd, &mesaj_nou);
+                }
+                strcpy(mesaj_nou.row1, "Asteptare...");
+                snprintf(mesaj_nou.row2, 17, "Total: %d/3", nr_detectari);
+                queue_add_blocking(&coada_lcd, &mesaj_nou);
+            }
+
+            printf("Nr detectari: %d \n", nr_detectari);
+            sleep_ms(100);
         }
-        //*** 
-
-
-        //***LCD I2C
-        lcd_clear();
-        lcd_set_cursor(0, 0);
-        lcd_string("Liliana >_< :3");
-        lcd_set_cursor(1, 0);
-        lcd_string("I2C LCD Test");
-        //*** 
-
-        
-        sleep_ms(2000);
+        stare_ir=ir_val;
+        sleep_ms(500);
+       
     }
     return 0;
 }

@@ -58,7 +58,8 @@ target_include_directories(proiect_1.0 PRIVATE
 # Add any user requested libraries
 target_link_libraries(proiect_1.0 
         hardware_i2c
-        pico_cyw43_arch_lwip_threadsafe_background
+        pico_util       
+        pico_multicore  
         )
 
 pico_add_extra_outputs(proiect_1.0)
